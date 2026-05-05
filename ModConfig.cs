@@ -59,5 +59,9 @@ namespace ClaimLinkedCrafting
         public int highlightMarkerLimit = 4;
         public float searchMarkerDuration = 30f;
         public int searchCommandCooldownFrames = 10;
+
+        // Storage drain order used when consuming ingredients from linked containers.
+        // nearest (default), farthest, name, quantity
+        public string storageConsumptionOrder = "nearest";
     }
 }

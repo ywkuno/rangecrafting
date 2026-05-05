@@ -93,3 +93,8 @@ Config:
 - `highlightSearchResults`: toggle marker highlight attempts.
 - `highlightMarkerLimit`: max highlighted containers per search.
 - `searchMarkerDuration`: marker lifetime in seconds (best effort).
+- `storageConsumptionOrder`: how linked storages are consumed during crafting.
+  - `nearest` (default): closest first
+  - `farthest`: farthest first
+  - `name`: alphabetic container name order
+  - `quantity`: containers with higher match count first (fallback to distance)

@@ -484,6 +484,11 @@ namespace ClaimLinkedCrafting
             return GetDistance(playerPos, storagePos) <= range;
         }
 
+        private static Vector3 GetCurrentPlayerPosition()
+        {
+            return GameManager.Instance?.World?.GetPrimaryPlayer()?.position ?? Vector3.zero;
+        }
+
         private static float GetDistance(Vector3 from, Vector3i to)
         {
             return Vector3.Distance(from, new Vector3(to.x, to.y, to.z));
@@ -999,7 +1004,7 @@ namespace ClaimLinkedCrafting
         {
             int numLeft = count;
 
-            foreach (var storage in currentStorageDict.Values.ToList())
+            foreach (var storage in GetStoragesInConsumptionOrder(item))
             {
                 if (storage == null)
                     continue;
@@ -1053,6 +1058,52 @@ namespace ClaimLinkedCrafting
             }
 
             return count - numLeft;
+        }
+
+        private static IEnumerable<object> GetStoragesInConsumptionOrder(ItemValue itemFilter)
+        {
+            if (currentStorageDict.Count == 0)
+                yield break;
+
+            if (string.IsNullOrWhiteSpace(config.storageConsumptionOrder))
+                config.storageConsumptionOrder = "nearest";
+
+            var order = config.storageConsumptionOrder.Trim().ToLowerInvariant();
+            var ordered = currentStorageDict.ToList();
+            var playerPos = GetCurrentPlayerPosition();
+
+            if (order == "farthest")
+            {
+                ordered.Sort((a, b) => GetDistance(playerPos, b.Key).CompareTo(GetDistance(playerPos, a.Key)));
+            }
+            else if (order == "name")
+            {
+                ordered.Sort((a, b) =>
+                {
+                    var nameA = GetContainerName(a.Value, $"{a.Key.x}, {a.Key.y}, {a.Key.z}");
+                    var nameB = GetContainerName(b.Value, $"{b.Key.x}, {b.Key.y}, {b.Key.z}");
+                    return string.Compare(nameA, nameB, StringComparison.OrdinalIgnoreCase);
+                });
+            }
+            else if (order == "quantity")
+            {
+                ordered.Sort((a, b) =>
+                {
+                    var itemType = itemFilter.type;
+                    var qtyA = itemType >= 0 ? CountItemInStorage(a.Value, itemType) : 0;
+                    var qtyB = itemType >= 0 ? CountItemInStorage(b.Value, itemType) : 0;
+                    if (qtyA == qtyB)
+                        return GetDistance(playerPos, a.Key).CompareTo(GetDistance(playerPos, b.Key));
+                    return qtyB.CompareTo(qtyA);
+                });
+            }
+            else
+            {
+                ordered.Sort((a, b) => GetDistance(playerPos, a.Key).CompareTo(GetDistance(playerPos, b.Key)));
+            }
+
+            foreach (var entry in ordered)
+                yield return entry.Value;
         }
 
         private static List<ItemStack> GetStorageItems()
@@ -1590,6 +1641,11 @@ namespace ClaimLinkedCrafting
                 c.highlightMarkerLimit = 4;
             if (c.searchCommandCooldownFrames <= 0)
                 c.searchCommandCooldownFrames = 10;
+            if (string.IsNullOrWhiteSpace(c.storageConsumptionOrder))
+                c.storageConsumptionOrder = "nearest";
+            var storageOrder = c.storageConsumptionOrder.Trim().ToLowerInvariant();
+            if (storageOrder != "nearest" && storageOrder != "farthest" && storageOrder != "name" && storageOrder != "quantity")
+                c.storageConsumptionOrder = "nearest";
             if (!c.permitClaimOwner && !c.permitClaimFriend && !c.permitClaimAlly && !c.permitClaimParty && !c.permitClaimClan)
                 c.permitClaimOwner = true;
             if (c.landClaimBlockNames == null || c.landClaimBlockNames.Length == 0)
