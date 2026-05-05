@@ -1226,10 +1226,10 @@ namespace ClaimLinkedCrafting
             if (claimTileEntity == null || string.IsNullOrEmpty(localId))
                 return false;
 
-            if (!string.IsNullOrEmpty(ownerId) && string.Equals(ownerId, localId, StringComparison.Ordinal))
+            if (config.permitClaimOwner && !string.IsNullOrEmpty(ownerId) && string.Equals(ownerId, localId, StringComparison.Ordinal))
                 return true;
 
-            if (IsFriendOnClaimEntity(claimTileEntity, localId))
+            if (IsClaimPermissionMatch(claimTileEntity, localId))
                 return true;
 
             if (!config.requireOwnerMetadataMatch && string.IsNullOrEmpty(ownerId))
@@ -1238,12 +1238,12 @@ namespace ClaimLinkedCrafting
             return false;
         }
 
-        private static bool IsFriendOnClaimEntity(TileEntity claimTileEntity, string playerIdentifier)
+        private static bool IsClaimPermissionMatch(TileEntity claimTileEntity, string playerIdentifier)
         {
             if (claimTileEntity == null || string.IsNullOrEmpty(playerIdentifier))
                 return false;
 
-            // Reflection-first approach: check any method like IsFriend/IsAllowed that can evaluate ownership.
+            // Reflection-first approach: check any method or field exposing permission lists/ownership checks.
             var teType = claimTileEntity.GetType();
             foreach (var m in teType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
@@ -1251,7 +1251,7 @@ namespace ClaimLinkedCrafting
                     continue;
 
                 var name = m.Name.ToLowerInvariant();
-                if (!name.Contains("friend") && !name.Contains("allowed") && !name.Contains("access"))
+                if (!IsPermissionKeywordAllowed(name))
                     continue;
 
                 var pars = m.GetParameters();
@@ -1270,13 +1270,31 @@ namespace ClaimLinkedCrafting
             {
                 if (!(m is FieldInfo fi))
                     continue;
-                if (!m.Name.ToLowerInvariant().Contains("friend") && !m.Name.ToLowerInvariant().Contains("allow"))
+                if (!IsPermissionKeywordAllowed(m.Name))
                     continue;
 
                 object value = fi.GetValue(claimTileEntity);
                 if (IsPlayerInEnumerable(value, playerIdentifier))
                     return true;
             }
+
+            return false;
+        }
+
+        private static bool IsPermissionKeywordAllowed(string lowerName)
+        {
+            var name = lowerName?.ToLowerInvariant() ?? string.Empty;
+            if (name.Contains("friend") || name.Contains("buddy"))
+                return config.permitClaimFriend;
+
+            if (name.Contains("ally"))
+                return config.permitClaimAlly;
+
+            if (name.Contains("party") || name.Contains("group") || name.Contains("guild") || name.Contains("clan") || name.Contains("faction"))
+                return config.permitClaimParty || config.permitClaimClan;
+
+            if (name.Contains("allowed") || name.Contains("allow") || name.Contains("access") || name.Contains("permission"))
+                return config.permitClaimFriend || config.permitClaimAlly || config.permitClaimParty || config.permitClaimClan;
 
             return false;
         }
@@ -1572,6 +1590,8 @@ namespace ClaimLinkedCrafting
                 c.highlightMarkerLimit = 4;
             if (c.searchCommandCooldownFrames <= 0)
                 c.searchCommandCooldownFrames = 10;
+            if (!c.permitClaimOwner && !c.permitClaimFriend && !c.permitClaimAlly && !c.permitClaimParty && !c.permitClaimClan)
+                c.permitClaimOwner = true;
             if (c.landClaimBlockNames == null || c.landClaimBlockNames.Length == 0)
                 c.landClaimBlockNames = new[] { "landclaim", "claimblock", "deed", "claim block" };
             return c;

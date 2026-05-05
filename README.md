@@ -50,6 +50,16 @@ Auto-created on first run.
   - If no claim is found, allow fallback to `range` search.
 - `requireOwnerMetadataMatch`
   - When true, claim blocks with missing owner metadata are not trusted for claim-only use.
+- `permitClaimOwner`
+  - If true, allows claim owner containers.
+- `permitClaimFriend`
+  - If true, allows friend access lists when detected.
+- `permitClaimAlly`
+  - If true, allows ally-style access entries when detected.
+- `permitClaimParty`
+  - If true, allows party-related permission checks when detected.
+- `permitClaimClan`
+  - If true, allows clan/group/faction-style permission checks when detected.
 - `allowAllContainers`
   - `true` to include broader storage-like containers; `false` keeps player storage containers only.
 - `patchHasItems`

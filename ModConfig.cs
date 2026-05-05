@@ -27,6 +27,18 @@ namespace ClaimLinkedCrafting
         public bool claimOnlyAllowRangeFallback = true;
         public bool requireOwnerMetadataMatch = false;
 
+        // Permission model used when resolving claim ownership.
+        // - permitClaimOwner: standard owner match.
+        // - permitClaimFriend: allow friend list entries.
+        // - permitClaimAlly: allow ally-style entries when present.
+        // - permitClaimParty: allow party teammates when available in claim metadata.
+        // - permitClaimClan: allow clan/tf/tribe style entries when available.
+        public bool permitClaimOwner = true;
+        public bool permitClaimFriend = true;
+        public bool permitClaimAlly = true;
+        public bool permitClaimParty = false;
+        public bool permitClaimClan = false;
+
         // Inventory source options.
         public bool allowAllContainers = false;
 
