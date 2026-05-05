@@ -3,6 +3,7 @@
     <TargetFramework>net48</TargetFramework>
     <LangVersion>latest</LangVersion>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AssemblyName>RangeCrafting</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
