@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <TargetFramework>net48</TargetFramework>
     <LangVersion>latest</LangVersion>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -13,23 +14,19 @@
 
   <ItemGroup>
     <Reference Include="0Harmony">
-      <HintPath>..\\..\\..\\path\\to\\7d2d\\lib\\0Harmony.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>C:\\Users\\Yong Wei\\.nuget\\packages\\lib.harmony\\2.3.3\\lib\\net48\\0Harmony.dll</HintPath>
+      <Private>true</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>..\\..\\..\\path\\to\\7d2d\\7DaysToDie_Data\\Managed\\Assembly-CSharp.dll</HintPath>
+      <HintPath>S:\\SteamLibrary\\steamapps\\common\\7 Days To Die\\7DaysToDie_Data\\Managed\\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\\..\\..\\path\\to\\7d2d\\7DaysToDie_Data\\Managed\\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>S:\\SteamLibrary\\steamapps\\common\\7 Days To Die\\7DaysToDie_Data\\Managed\\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
-      <HintPath>..\\..\\..\\path\\to\\7d2d\\7DaysToDie_Data\\Managed\\Newtonsoft.Json.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Platform">
-      <HintPath>..\\..\\..\\path\\to\\7d2d\\7DaysToDie_Data\\Managed\\Platform.dll</HintPath>
+      <HintPath>S:\\SteamLibrary\\steamapps\\common\\7 Days To Die\\7DaysToDie_Data\\Managed\\Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

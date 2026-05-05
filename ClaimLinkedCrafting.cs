@@ -353,10 +353,14 @@ namespace ClaimLinkedCrafting
 
             int maxResults = config.searchMaxResults;
             var queryTokens = new List<string>(args);
-            if (int.TryParse(queryTokens[^1], out var parsedMax) && parsedMax > 0)
+            if (queryTokens.Count > 0)
             {
-                maxResults = parsedMax;
-                queryTokens.RemoveAt(queryTokens.Count - 1);
+                var lastToken = queryTokens[queryTokens.Count - 1];
+                if (int.TryParse(lastToken, out var parsedMax) && parsedMax > 0)
+                {
+                    maxResults = parsedMax;
+                    queryTokens.RemoveAt(queryTokens.Count - 1);
+                }
             }
 
             var query = string.Join(" ", queryTokens).Trim();
@@ -615,9 +619,10 @@ namespace ClaimLinkedCrafting
         private static IEnumerable<ItemStack> ExtractItemStacksFromInventory(object inventory)
         {
             if (inventory == null)
-                yield break;
+                return Enumerable.Empty<ItemStack>();
 
             var invType = inventory.GetType();
+            var results = new List<ItemStack>();
             foreach (var methodName in new[] { "GetSlots", "GetAllItems", "GetItemStacks", "GetItems" })
             {
                 var method = invType.GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -635,7 +640,7 @@ namespace ClaimLinkedCrafting
                         foreach (var entry in enumerable.Cast<object>())
                         {
                             if (entry is ItemStack stack)
-                                yield return stack;
+                                results.Add(stack);
                         }
                     }
                 }
@@ -653,10 +658,12 @@ namespace ClaimLinkedCrafting
                     foreach (var entry in slotsEnumerable)
                     {
                         if (entry is ItemStack stack)
-                            yield return stack;
+                            results.Add(stack);
                     }
                 }
             }
+
+            return results;
         }
 
         private static object ResolveMemberValue(object obj, string memberName, string fallbackMemberName = null)
@@ -1233,7 +1240,7 @@ namespace ClaimLinkedCrafting
 
             lastClaimRefreshFrame = Time.frameCount;
             var localId = GetPlatformPlayerId();
-            if (string.IsNullOrEmpty(localId))
+            if (localId.Equals(default(PlatformUserIdentifierAbs)))
                 return;
 
             float searchRadius = GetClaimBlockSearchRadius();
@@ -1272,12 +1279,14 @@ namespace ClaimLinkedCrafting
                 Dbgl("No accessible claim anchors detected; using configured range fallback.");
         }
 
-        private static bool CanUseClaimBlockForPlayer(TileEntity claimTileEntity, string localId, string ownerId)
+        private static bool CanUseClaimBlockForPlayer(TileEntity claimTileEntity, PlatformUserIdentifierAbs localId, string ownerId)
         {
-            if (claimTileEntity == null || string.IsNullOrEmpty(localId))
+            if (claimTileEntity == null || localId.Equals(default(PlatformUserIdentifierAbs)))
                 return false;
 
-            if (config.permitClaimOwner && !string.IsNullOrEmpty(ownerId) && string.Equals(ownerId, localId, StringComparison.Ordinal))
+            var owner = ownerId?.ToLowerInvariant();
+            var local = PlatformIdentifierToComparableString(localId);
+            if (config.permitClaimOwner && !string.IsNullOrEmpty(owner) && string.Equals(owner, local, StringComparison.OrdinalIgnoreCase))
                 return true;
 
             if (IsClaimPermissionMatch(claimTileEntity, localId))
@@ -1289,9 +1298,9 @@ namespace ClaimLinkedCrafting
             return false;
         }
 
-        private static bool IsClaimPermissionMatch(TileEntity claimTileEntity, string playerIdentifier)
+        private static bool IsClaimPermissionMatch(TileEntity claimTileEntity, PlatformUserIdentifierAbs playerIdentifier)
         {
-            if (claimTileEntity == null || string.IsNullOrEmpty(playerIdentifier))
+            if (claimTileEntity == null || playerIdentifier.Equals(default(PlatformUserIdentifierAbs)))
                 return false;
 
             // Reflection-first approach: check any method or field exposing permission lists/ownership checks.
@@ -1308,8 +1317,12 @@ namespace ClaimLinkedCrafting
                 var pars = m.GetParameters();
                 if (pars.Length == 1)
                 {
+                    var playerIdAsString = PlatformIdentifierToComparableString(playerIdentifier);
+                    if (string.IsNullOrEmpty(playerIdAsString))
+                        return false;
+
                     object converted = null;
-                    try { converted = ConvertParameter(pars[0].ParameterType, playerIdentifier); } catch { }
+                    try { converted = ConvertParameter(pars[0].ParameterType, playerIdAsString); } catch { }
                     if (converted == null) continue;
                     if ((bool)m.Invoke(claimTileEntity, new[] { converted }))
                         return true;
@@ -1350,14 +1363,18 @@ namespace ClaimLinkedCrafting
             return false;
         }
 
-        private static bool IsPlayerInEnumerable(object value, string playerIdentifier)
+        private static bool IsPlayerInEnumerable(object value, PlatformUserIdentifierAbs playerIdentifier)
         {
-            if (value == null || string.IsNullOrEmpty(playerIdentifier))
+            if (value == null || playerIdentifier.Equals(default(PlatformUserIdentifierAbs)))
+                return false;
+
+            var comparable = PlatformIdentifierToComparableString(playerIdentifier);
+            if (string.IsNullOrEmpty(comparable))
                 return false;
 
             if (value is string s)
             {
-                if (s.IndexOf(playerIdentifier, StringComparison.OrdinalIgnoreCase) >= 0)
+                if (s.IndexOf(comparable, StringComparison.OrdinalIgnoreCase) >= 0)
                     return true;
             }
 
@@ -1365,9 +1382,7 @@ namespace ClaimLinkedCrafting
             {
                 foreach (var x in e)
                 {
-                    if (x == null)
-                        continue;
-                    if (string.Equals(Convert.ToString(x), playerIdentifier, StringComparison.OrdinalIgnoreCase))
+                    if (PlatformIdentifierMatch(x, playerIdentifier))
                         return true;
                 }
             }
@@ -1383,11 +1398,65 @@ namespace ClaimLinkedCrafting
                 return int.TryParse(playerIdentifier, out var i) ? i : (int?)null;
             if (targetType == typeof(long) || targetType == typeof(long?))
                 return long.TryParse(playerIdentifier, out var l) ? l : (long?)null;
-            if (targetType == typeof(PlatformUserIdentifierAbs) || targetType == typeof(PlatformUserIdentifierAbs?))
-                return null;
+            if (targetType == typeof(PlatformUserIdentifierAbs))
+                return ParsePlatformIdentifier(playerIdentifier);
             if (targetType == typeof(object))
                 return playerIdentifier;
             return null;
+        }
+
+        private static PlatformUserIdentifierAbs ParsePlatformIdentifier(string playerIdentifier)
+        {
+            if (string.IsNullOrEmpty(playerIdentifier))
+                return default;
+
+            try
+            {
+                var fromCombined = typeof(PlatformUserIdentifierAbs).GetMethod(
+                    "FromCombinedString",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null,
+                    new[] { typeof(string), typeof(bool) },
+                    null);
+                if (fromCombined != null)
+                {
+                    var parsed = fromCombined.Invoke(null, new object[] { playerIdentifier, false });
+                    if (parsed is PlatformUserIdentifierAbs parsedId)
+                        return parsedId;
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return default;
+        }
+
+        private static bool PlatformIdentifierMatch(object candidate, PlatformUserIdentifierAbs playerIdentifier)
+        {
+            if (candidate == null || playerIdentifier.Equals(default(PlatformUserIdentifierAbs)))
+                return false;
+
+            if (candidate is PlatformUserIdentifierAbs candidateIdentifier)
+                return candidateIdentifier.Equals(playerIdentifier);
+
+            var candidateText = Convert.ToString(candidate);
+            var compare = PlatformIdentifierToComparableString(playerIdentifier);
+            if (string.IsNullOrEmpty(compare) || string.IsNullOrEmpty(candidateText))
+                return false;
+
+            return string.Equals(candidateText, compare, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string PlatformIdentifierToComparableString(PlatformUserIdentifierAbs playerIdentifier)
+        {
+            if (playerIdentifier.Equals(default(PlatformUserIdentifierAbs)))
+                return null;
+
+            return playerIdentifier.PlatformIdentifierString ??
+                   playerIdentifier.ReadablePlatformUserIdentifier ??
+                   playerIdentifier.ToString();
         }
 
         private static bool IsInAnyAccessibleClaim(Vector3i loc)
@@ -1426,11 +1495,11 @@ namespace ClaimLinkedCrafting
                     return true;
                 }
             }
-            else if (tileEntity is TileEntitySecureLootContainer secure && secure.IsPlayerStorage())
+            else if (tileEntity is TileEntitySecureLootContainer secure && IsSecureStorageTileEntity(secure))
             {
-                if (secure.IsLocked())
+                if (secure is ILockable lockable && lockable.IsLocked())
                 {
-                    if (!secure.IsUserAllowed(GetPlatformPlayerId()))
+                    if (!lockable.IsUserAllowed(GetPlatformPlayerId()))
                         return false;
                 }
                 return true;
@@ -1439,6 +1508,22 @@ namespace ClaimLinkedCrafting
             {
                 return true;
             }
+            return false;
+        }
+
+        private static bool IsSecureStorageTileEntity(TileEntitySecureLootContainer container)
+        {
+            if (container == null)
+                return false;
+
+            var storageField = container.GetType().GetField("bPlayerStorage", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (storageField != null && storageField.GetValue(container) is bool isPlayerStorageField)
+                return isPlayerStorageField;
+
+            var storageProperty = container.GetType().GetProperty("bPlayerStorage", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (storageProperty != null && storageProperty.GetValue(container) is bool isPlayerStorageProperty)
+                return isPlayerStorageProperty;
+
             return false;
         }
 
@@ -1479,7 +1564,7 @@ namespace ClaimLinkedCrafting
             return Mathf.Max(0f, config.claimSearchRadius <= 0f ? (config.claimRadius * 2f + 10f) : config.claimSearchRadius);
         }
 
-        private static string GetPlatformPlayerId()
+        private static PlatformUserIdentifierAbs GetPlatformPlayerId()
         {
             return PlatformManager.InternalLocalUserIdentifier;
         }
@@ -1493,7 +1578,7 @@ namespace ClaimLinkedCrafting
                 if (codes[i].opcode == OpCodes.Callvirt && IsCallToGetAllItemStacks(codes[i].operand))
                 {
                     Dbgl("Patching ItemActionEntryCraft.OnActivated for claim-linked storage");
-                    codes.Insert(i + 1, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(ClaimLinkedCrafting), nameof(ClaimLinkedCrafting.GetAllStorageStacksList)));
+                    codes.Insert(i + 1, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(ClaimLinkedCrafting), nameof(ClaimLinkedCrafting.GetAllStorageStacksList))));
                     break;
                 }
             }
@@ -1508,7 +1593,7 @@ namespace ClaimLinkedCrafting
                 if (codes[i].opcode == OpCodes.Call && IsCallToGetAllItemStacks(codes[i].operand))
                 {
                     Dbgl("Patching XUiM_PlayerInventory.CanSwapItems for claim-linked storage");
-                    codes.Insert(i + 1, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(ClaimLinkedCrafting), nameof(ClaimLinkedCrafting.GetAllStorageStacksList)));
+                    codes.Insert(i + 1, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(ClaimLinkedCrafting), nameof(ClaimLinkedCrafting.GetAllStorageStacksList))));
                     break;
                 }
             }
@@ -1523,7 +1608,7 @@ namespace ClaimLinkedCrafting
                 if (codes[i].opcode == OpCodes.Callvirt && IsCallToGetAllItemStacks(codes[i].operand))
                 {
                     Dbgl("Patching XUiC_RecipeCraftCount.calcMaxCraftable for claim-linked storage");
-                    codes.Insert(i + 2, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(ClaimLinkedCrafting), nameof(ClaimLinkedCrafting.GetAllStorageStacksArray)));
+                    codes.Insert(i + 2, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(ClaimLinkedCrafting), nameof(ClaimLinkedCrafting.GetAllStorageStacksArray))));
                     break;
                 }
             }
