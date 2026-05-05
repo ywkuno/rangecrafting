@@ -19,7 +19,48 @@ It does **not** alter pickup/drop, repair, reload, or vehicle-fuel behavior.
 6. For your setup, place the folder here:
    - `S:\SteamLibrary\steamapps\common\7 Days To Die\Mods\RangeCrafting\`
 
+## Quick start
+
+1. Drop the folder into Mods.
+2. Start the game.
+3. Open crafting UI and try a recipe that needs nearby materials.
+4. If nothing appears, run:
+   - `/rsearch <item> scope=claim`
+   - `/rsearch <item> scope=range`
+   - `/rsearch <item> state=unlocked`
+5. To allow storage consume in a locked security scenario run:
+   - `/rconfirm 30`
+
+If you use claim-only mode and the recipe is still not pulling from nearby storage:
+- verify the container is inside a valid claim area,
+- verify you are owner/friend on that claim,
+- verify the container is not denied by `blockedStorageContainerNames`.
+
+## First run config behavior
+
+- On first launch, the mod auto-generates `config.json` if missing.
+- The repository also ships `config.example.json` with a safe baseline and inline notes.
+- Recommended publish-safe setup:
+  - copy `config.example.json` → `config.json`
+  - edit only the keys you want to change
+  - keep `storageUseConfirmationSeconds` and search toggles as desired
+
+## Changelog
+
+- `1.0.2`:
+  - Added Steam publish polish:
+    - clearer install and quick-start docs,
+    - explicit first-run config guidance,
+    - search/filter usage notes refreshed.
+  - added version bump for publish metadata.
+
 ## Workshop packaging
+
+For Steam Workshop uploads, also include:
+- `RangeCrafting.dll`
+- `ModInfo.xml`
+- `README.md`
+- `config.example.json` (or your edited `config.json`)
 
 After building `RangeCrafting.dll`, create a Steam-ready zip:
 
