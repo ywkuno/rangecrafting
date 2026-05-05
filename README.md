@@ -1,4 +1,4 @@
-# Claim-Linked Crafting (7 Days to Die, C# ModAPI)
+# RangeCrafting (7 Days to Die, C# ModAPI)
 
 This mod implements crafting-only linked inventory support for 7 Days to Die.
 
@@ -12,7 +12,7 @@ It does **not** alter pickup/drop, repair, reload, or vehicle-fuel behavior.
 
 1. Build `ClaimLinkedCrafting.dll` with references to `Assembly-CSharp.dll`, `0Harmony.dll`, and `UnityEngine` from your 7D2D install.
 2. Copy the output folder contents into:
-   - `<7D2D Installation>\Mods\ClaimLinkedCrafting\`
+   - `<7D2D Installation>\Mods\RangeCrafting\`
 3. Ensure `ModInfo.xml`, `ClaimLinkedCrafting.dll`, and `config.json` are in the same folder.
 4. Start the game and verify the mod appears in the mod list.
 
