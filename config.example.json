@@ -1,0 +1,43 @@
+{
+  "_notes": [
+    "RangeCrafting configuration example (copy to config.json if you want custom defaults).",
+    "Keep this in one place, tune permission flags and search defaults before launching.",
+    "JSON fields are read by ModConfig; unknown fields are ignored."
+  ],
+  "modEnabled": true,
+  "mode": "claimOnly",
+  "range": 20.0,
+  "claimRadius": 20.0,
+  "claimSearchRadius": 0.0,
+  "scanCooldownFrames": 6,
+  "claimRefreshCooldownFrames": 10,
+  "claimOnlyAllowRangeFallback": true,
+  "requireOwnerMetadataMatch": false,
+  "permissionProfile": "vanilla",
+  "permitClaimOwner": true,
+  "permitClaimFriend": true,
+  "permitClaimAlly": true,
+  "permitClaimParty": false,
+  "permitClaimClan": false,
+  "allowedStorageContainerNames": [],
+  "blockedStorageContainerNames": [],
+  "allowAllContainers": false,
+  "requireStorageUseConfirmation": false,
+  "storageUseConfirmationSeconds": 30.0,
+  "patchHasItems": false,
+  "landClaimBlockNames": [
+    "landclaim",
+    "claimblock",
+    "deed",
+    "claim block"
+  ],
+  "isDebug": false,
+  "enableRangeSearch": true,
+  "searchMaxResults": 8,
+  "searchRange": 0.0,
+  "highlightSearchResults": true,
+  "highlightMarkerLimit": 4,
+  "searchMarkerDuration": 30.0,
+  "searchCommandCooldownFrames": 10,
+  "storageConsumptionOrder": "nearest"
+}

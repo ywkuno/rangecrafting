@@ -14,8 +14,9 @@ It does **not** alter pickup/drop, repair, reload, or vehicle-fuel behavior.
 2. Copy the output folder contents into:
    - `<7D2D Installation>\Mods\RangeCrafting\`
 3. Ensure `ModInfo.xml`, `RangeCrafting.dll`, and `config.json` are in the same folder.
-4. Start the game and verify the mod appears in the mod list.
-5. For your setup, place the folder here:
+4. Optional: copy `config.example.json` to `config.json` (recommended once for clean, documented defaults).
+5. Start the game and verify the mod appears in the mod list.
+6. For your setup, place the folder here:
    - `S:\SteamLibrary\steamapps\common\7 Days To Die\Mods\RangeCrafting\`
 
 ## Workshop packaging
@@ -79,13 +80,20 @@ Auto-created on first run.
 In-game command (if the build supports the chat/console hook):
 
 ```text
-/rsearch <item name or item id> [max=<n>] [r=<range>] [count=<n>]
+/rsearch <item name or item id> [max=<n>] [r=<range>] [count=<n>] [scope=claim|range|all] [state=locked|unlocked|all]
 ```
 
 - `/rsearch wire max=5 r=30` finds nearest matching storages and tries to highlight them.
+- `/rsearch wire scope=claim state=unlocked` filters to unlocked containers in active claim scope.
+- `/rsearch stone all r=30 state=locked` returns locked-only matches within 30m.
 - `/rconfirm [seconds]` grants a short approval window (default from config) to allow storage extraction.
 - `/rlog [n]` shows the recent craft/storage action log.
 - `/rhelp` shows command usage in chat.
+- Search result tags:
+  - `[C]` in claim scope
+  - `[R]` range-only (outside active claim scope)
+  - `[L]` locked (accessible)
+  - `[U]` unlocked
 - If marker APIs are unavailable, you still get results with coordinates.
 
 Config:
@@ -101,6 +109,8 @@ Config:
   - `farthest`: farthest first
   - `name`: alphabetic container name order
   - `quantity`: containers with higher match count first (fallback to distance)
+
+Tip: `config.example.json` is included and can be copied to `config.json` to start with documented defaults and easy edit notes.
 
 ## Storage confirmation + permissions
 

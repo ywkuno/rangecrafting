@@ -26,6 +26,34 @@ namespace ClaimLinkedCrafting
         public string containerName;
         public int totalCount;
         public float distance;
+        public bool isInClaimScope;
+        public bool isLocked;
+    }
+
+    internal enum SearchScopeFilter
+    {
+        All,
+        ClaimOnly,
+        RangeOnly
+    }
+
+    internal enum SearchStateFilter
+    {
+        All,
+        LockedOnly,
+        UnlockedOnly
+    }
+
+    internal struct SearchResultFilter
+    {
+        public SearchScopeFilter scope;
+        public SearchStateFilter state;
+
+        public static SearchResultFilter Default => new SearchResultFilter
+        {
+            scope = SearchScopeFilter.All,
+            state = SearchStateFilter.All
+        };
     }
 
     public class ClaimLinkedCrafting : IModApi
@@ -56,6 +84,10 @@ namespace ClaimLinkedCrafting
         private static readonly string[] ConfirmCommandAliases = new[] { "rconfirm", "rcconfirm", "rcraftconfirm" };
         private static readonly string[] StorageLogCommandAliases = new[] { "rlog", "craftlog", "rcraftlog" };
         private static readonly string[] HelpCommandAliases = new[] { "rhelp", "rangecraftinghelp", "rinfo" };
+        private static readonly int StorageConfirmationHintCooldownFrames = 300;
+        private static readonly int StorageStatusBannerCooldownFrames = 180;
+        private static int lastStorageUseHintFrame;
+        private static int lastStorageStatusFrame;
         private static readonly string[] SearchChatTypeCandidates = new[]
         {
             "XUiC_ChatWindow",
@@ -364,7 +396,8 @@ namespace ClaimLinkedCrafting
         private static string BuildRangeCraftingHelpText()
         {
             return "[RangeCrafting] commands: " +
-                   "/rsearch <item> [max=N] [r=N] | /rsearch <item> [count=N] | /rconfirm [seconds=30] | /rlog [n] | /rhelp";
+                   "/rsearch <item> [max=N] [r=N] [count=N] [scope=claim|range|all] [state=locked|unlocked|all] | " +
+                   "/rconfirm [seconds=30] | /rlog [n] | /rhelp";
         }
 
         private static bool TryHandleRangeSearch(string argsText, out string response)
@@ -375,37 +408,39 @@ namespace ClaimLinkedCrafting
 
             if (string.IsNullOrWhiteSpace(argsText))
             {
-                response = "Usage: /rsearch <item name or item id> [max=N] [r=N] [count=N]";
+                response = "Usage: /rsearch <item name or item id> [max=N] [r=N] [count=N] [scope=claim|range|all] [state=locked|unlocked|all]";
                 return true;
             }
 
             var args = ParseArguments(argsText);
             if (args.Count == 0)
             {
-                response = "Usage: /rsearch <item name or item id> [max=N] [r=N] [count=N]";
+                response = "Usage: /rsearch <item name or item id> [max=N] [r=N] [count=N] [scope=claim|range|all] [state=locked|unlocked|all]";
                 return true;
             }
 
             int maxResults = config.searchMaxResults;
             float range = GetRangeForSearch();
-            ParseSearchCommandArgs(args, ref maxResults, ref range, out var queryTokens);
+            var filter = SearchResultFilter.Default;
+            ParseSearchCommandArgs(args, ref maxResults, ref range, out var queryTokens, out filter);
 
             var query = string.Join(" ", queryTokens).Trim();
             if (string.IsNullOrWhiteSpace(query))
             {
-                response = "Usage: /rsearch <item name or item id> [max results]";
+                response = "Usage: /rsearch <item name or item id> [max=N] [r=N] [count=N] [scope=claim|range|all] [state=locked|unlocked|all]";
                 return true;
             }
 
-            var results = FindContainersWithItem(query, maxResults, range);
+            var results = FindContainersWithItem(query, maxResults, range, filter);
             var playerCount = CountItemInPlayerInventory(query, out _);
 
             if (results == null || results.Count == 0)
             {
+                var noResultSummary = BuildSearchFilterSummary(filter, range);
                 if (playerCount > 0)
-                    response = $"Found only in player inventory: {playerCount}x {query}.";
+                    response = $"Found only in player inventory: {playerCount}x {query}. {noResultSummary}";
                 else
-                    response = $"No matching items found in claim-linked storages/radius for '{query}'.";
+                    response = $"No matching items found for '{query}' in nearby storage. {noResultSummary}";
                 return true;
             }
 
@@ -414,11 +449,13 @@ namespace ClaimLinkedCrafting
                 ? $"Player inventory: {playerCount}x"
                 : "Player inventory: 0x");
             lines.Add($"Search: '{query}' ({results.Count} container(s))");
+            lines.Add($"Scope={filter.scope} | State={filter.state} | radius={range:0.0}m");
+            lines.Add(BuildSearchResultLegend());
             for (var i = 0; i < results.Count; i++)
             {
                 var hit = results[i];
                 lines.Add(
-                    $"{i + 1}) {hit.containerName} @ {FormatVector(hit.position)} | " +
+                    $"{i + 1}) {BuildStorageResultTag(hit)} {hit.containerName} @ {FormatVector(hit.position)} | " +
                     $"Qty {hit.totalCount} | {hit.distance:0.0}m"
                 );
             }
@@ -431,9 +468,10 @@ namespace ClaimLinkedCrafting
             return true;
         }
 
-        private static void ParseSearchCommandArgs(List<string> args, ref int maxResults, ref float range, out List<string> queryTokens)
+        private static void ParseSearchCommandArgs(List<string> args, ref int maxResults, ref float range, out List<string> queryTokens, out SearchResultFilter filter)
         {
             queryTokens = new List<string>();
+            filter = SearchResultFilter.Default;
             if (args == null || args.Count == 0)
                 return;
 
@@ -465,6 +503,40 @@ namespace ClaimLinkedCrafting
                         leftoverRange = parsedRange;
                         continue;
                     }
+
+                    if (key.Equals("scope", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (value.Equals("claim", StringComparison.OrdinalIgnoreCase))
+                            filter.scope = SearchScopeFilter.ClaimOnly;
+                        else if (value.Equals("range", StringComparison.OrdinalIgnoreCase))
+                            filter.scope = SearchScopeFilter.RangeOnly;
+                        else
+                            filter.scope = SearchScopeFilter.All;
+                        continue;
+                    }
+
+                    if (key.Equals("state", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (value.Equals("locked", StringComparison.OrdinalIgnoreCase))
+                            filter.state = SearchStateFilter.LockedOnly;
+                        else if (value.Equals("unlocked", StringComparison.OrdinalIgnoreCase))
+                            filter.state = SearchStateFilter.UnlockedOnly;
+                        else
+                            filter.state = SearchStateFilter.All;
+                        continue;
+                    }
+                }
+
+                if (TryParseScopeToken(normalized, out var scopeFilter))
+                {
+                    filter.scope = scopeFilter;
+                    continue;
+                }
+
+                if (TryParseStateToken(normalized, out var stateFilter))
+                {
+                    filter.state = stateFilter;
+                    continue;
                 }
 
                 if (int.TryParse(normalized, out var parsed) && parsed > 0 && queryTokens.Count == 0 && args.Count == 1)
@@ -479,6 +551,66 @@ namespace ClaimLinkedCrafting
 
             maxResults = Mathf.Max(1, Mathf.Min(50, leftoverMax));
             range = Mathf.Max(0f, leftoverRange);
+        }
+
+        private static bool TryParseScopeToken(string token, out SearchScopeFilter scope)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                scope = SearchScopeFilter.All;
+                return false;
+            }
+
+            if (token.Equals("claim", StringComparison.OrdinalIgnoreCase))
+            {
+                scope = SearchScopeFilter.ClaimOnly;
+                return true;
+            }
+
+            if (token.Equals("range", StringComparison.OrdinalIgnoreCase))
+            {
+                scope = SearchScopeFilter.RangeOnly;
+                return true;
+            }
+
+            if (token.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                scope = SearchScopeFilter.All;
+                return true;
+            }
+
+            scope = SearchScopeFilter.All;
+            return false;
+        }
+
+        private static bool TryParseStateToken(string token, out SearchStateFilter state)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                state = SearchStateFilter.All;
+                return false;
+            }
+
+            if (token.Equals("locked", StringComparison.OrdinalIgnoreCase))
+            {
+                state = SearchStateFilter.LockedOnly;
+                return true;
+            }
+
+            if (token.Equals("unlocked", StringComparison.OrdinalIgnoreCase))
+            {
+                state = SearchStateFilter.UnlockedOnly;
+                return true;
+            }
+
+            if (token.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                state = SearchStateFilter.All;
+                return true;
+            }
+
+            state = SearchStateFilter.All;
+            return false;
         }
 
         private static bool TryHandleStorageConfirmation(string argsText, out string response)
@@ -497,6 +629,7 @@ namespace ClaimLinkedCrafting
             storageUseApprovalUntil[playerId] = Time.time + seconds;
 
             response = $"[RangeCrafting] Storage-usage confirmation enabled for {seconds:0}s.";
+            ShowStorageConfirmationStatusBanner(seconds);
             return true;
         }
 
@@ -517,6 +650,65 @@ namespace ClaimLinkedCrafting
             var lines = storageActionLog.Reverse().Take(maxLines).Reverse().ToList();
             response = "[RangeCrafting] Recent craft/storage log:\n" + string.Join("\n", lines);
             return true;
+        }
+
+        private static float GetStorageUseApprovalRemainingSeconds()
+        {
+            if (!config.requireStorageUseConfirmation)
+                return 0f;
+
+            var player = GetPlatformPlayerId();
+            if (player.Equals(default(PlatformUserIdentifierAbs)))
+                return 0f;
+
+            var key = GetPlayerAuthorizationKey(player);
+            if (string.IsNullOrEmpty(key))
+                return 0f;
+
+            if (!storageUseApprovalUntil.TryGetValue(key, out var expiresAt))
+                return 0f;
+
+            var remaining = expiresAt - Time.time;
+            if (remaining <= 0f)
+            {
+                storageUseApprovalUntil.Remove(key);
+                return 0f;
+            }
+
+            return remaining;
+        }
+
+        private static void ShowStorageConfirmationStatusBanner(float seconds = -1f)
+        {
+            if (!config.requireStorageUseConfirmation || !config.modEnabled || !isReady)
+                return;
+
+            var remaining = seconds > 0f ? seconds : GetStorageUseApprovalRemainingSeconds();
+            if (remaining <= 0f)
+                return;
+
+            if (Time.frameCount - lastStorageStatusFrame < StorageStatusBannerCooldownFrames)
+                return;
+
+            lastStorageStatusFrame = Time.frameCount;
+            DeliverToPlayer($"[RangeCrafting] Storage confirmation active: {remaining:0.0}s remaining. Storage crafting from linked containers is enabled.", GetLocalPlayer());
+        }
+
+        private static void ShowStorageConfirmationNeededHint(ItemValue item, int fromStorage)
+        {
+            if (!config.requireStorageUseConfirmation || item == null || fromStorage <= 0)
+                return;
+
+            if (Time.frameCount - lastStorageUseHintFrame < StorageConfirmationHintCooldownFrames)
+                return;
+
+            lastStorageUseHintFrame = Time.frameCount;
+            var name = ItemDisplayName(item);
+            var remaining = GetStorageUseApprovalRemainingSeconds();
+            if (remaining > 0f)
+                DeliverToPlayer($"[RangeCrafting] {fromStorage}x {name} needs storage confirmation. {remaining:0.0}s left in approval window.", GetLocalPlayer());
+            else
+                DeliverToPlayer($"[RangeCrafting] {fromStorage}x {name} needs storage approval. Run /rconfirm {config.storageUseConfirmationSeconds:0}s.", GetLocalPlayer());
         }
 
         private static bool TryParseColonEqualsPair(string token, out string key, out string value)
@@ -548,7 +740,86 @@ namespace ClaimLinkedCrafting
             return argsText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList();
         }
 
-        private static List<StorageSearchHit> FindContainersWithItem(string query, int maxResults, float rangeOverride)
+        private static string BuildSearchResultLegend()
+        {
+            return "Legend: [C]=claim scope, [R]=range scope, [L]=locked, [U]=unlocked";
+        }
+
+        private static string BuildSearchFilterSummary(SearchResultFilter filter, float range)
+        {
+            var scope = filter.scope switch
+            {
+                SearchScopeFilter.ClaimOnly => "claim",
+                SearchScopeFilter.RangeOnly => "range",
+                _ => "all"
+            };
+
+            var state = filter.state switch
+            {
+                SearchStateFilter.LockedOnly => "locked only",
+                SearchStateFilter.UnlockedOnly => "unlocked only",
+                _ => "all states"
+            };
+
+            var scopeHint = range > 0f ? $"range={range:0.0}m" : "default range";
+            return $"Filters: scope={scope}, state={state}, {scopeHint}.";
+        }
+
+        private static string BuildStorageResultTag(StorageSearchHit hit)
+        {
+            var scope = hit.isInClaimScope ? "C" : "R";
+            var lockState = hit.isLocked ? "L" : "U";
+            return $"[{scope} {lockState}]";
+        }
+
+        private static StorageSearchHit BuildStorageSearchHit(object storage, Vector3i position, int totalCount, Vector3 playerPos)
+        {
+            return new StorageSearchHit
+            {
+                position = position,
+                containerName = GetContainerName(storage, $"{position.x}, {position.y}, {position.z}"),
+                totalCount = totalCount,
+                distance = GetDistance(playerPos, position),
+                isInClaimScope = IsInAnyAccessibleClaim(position),
+                isLocked = IsStorageLocked(storage)
+            };
+        }
+
+        private static bool PassesSearchFilters(StorageSearchHit hit, SearchResultFilter filter)
+        {
+            if (filter.scope == SearchScopeFilter.ClaimOnly && !hit.isInClaimScope)
+                return false;
+
+            if (filter.scope == SearchScopeFilter.RangeOnly && hit.isInClaimScope)
+                return false;
+
+            if (filter.state == SearchStateFilter.LockedOnly && !hit.isLocked)
+                return false;
+
+            if (filter.state == SearchStateFilter.UnlockedOnly && hit.isLocked)
+                return false;
+
+            return true;
+        }
+
+        private static bool IsStorageLocked(object storage)
+        {
+            if (storage == null)
+                return false;
+
+            if (storage is ILockable directLockable && directLockable.IsLocked())
+                return true;
+
+            if (storage is TileEntityComposite composite)
+            {
+                var lockable = composite.GetFeature<ILockable>();
+                return lockable != null && lockable.IsLocked();
+            }
+
+            return false;
+        }
+
+        private static List<StorageSearchHit> FindContainersWithItem(string query, int maxResults, float rangeOverride, SearchResultFilter filter)
         {
             var hits = new List<StorageSearchHit>();
             ReloadStorages();
@@ -569,13 +840,11 @@ namespace ClaimLinkedCrafting
 
                     var count = CountItemInStorage(storage, itemType);
                     if (count > 0)
-                        hits.Add(new StorageSearchHit
-                        {
-                            position = pos,
-                            containerName = GetContainerName(storage, $"Container@{FormatVector(pos)}"),
-                            totalCount = count,
-                            distance = GetDistance(playerPos, pos)
-                        });
+                    {
+                        var hit = BuildStorageSearchHit(storage, pos, count, playerPos);
+                        if (PassesSearchFilters(hit, filter))
+                            hits.Add(hit);
+                    }
                 }
             }
             else
@@ -591,13 +860,9 @@ namespace ClaimLinkedCrafting
                     var count = CountItemInStorage(storage, normalizedQuery);
                     if (count > 0)
                     {
-                        hits.Add(new StorageSearchHit
-                        {
-                            position = pos,
-                            containerName = GetContainerName(storage, $"Container@{FormatVector(pos)}"),
-                            totalCount = count,
-                            distance = GetDistance(playerPos, pos)
-                        });
+                        var hit = BuildStorageSearchHit(storage, pos, count, playerPos);
+                        if (PassesSearchFilters(hit, filter))
+                            hits.Add(hit);
                     }
                 }
             }
@@ -934,7 +1199,7 @@ namespace ClaimLinkedCrafting
                 }
                 else if (!usedString && p.ParameterType == typeof(string))
                 {
-                    args[i] = $"{hit.containerName} ({hit.totalCount}x)";
+                    args[i] = $"{BuildStorageResultTag(hit)} {hit.containerName} ({hit.totalCount}x)";
                     usedString = true;
                 }
                 else if (!usedDuration && p.ParameterType == typeof(float))
@@ -1204,6 +1469,7 @@ namespace ClaimLinkedCrafting
                 if (fromStorage > 0)
                 {
                     RecordStorageAction($"Blocked storage consume request: {fromStorage}x {ItemDisplayName(item)} from linked storages (run /rconfirm).");
+                    ShowStorageConfirmationNeededHint(item, fromStorage);
                 }
 
                 return count;
