@@ -49,7 +49,13 @@ namespace ClaimLinkedCrafting
         private static bool isReady;
         private static bool isSearchCommandPatched;
         private static MethodInfo[] cachedMarkerMethods;
+        private static readonly int StorageActionLogLimit = 30;
+        private static readonly Queue<string> storageActionLog = new Queue<string>();
+        private static readonly Dictionary<string, float> storageUseApprovalUntil = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
         private static readonly string[] SearchCommandAliases = new[] { "rsearch", "rangesearch", "rangecrafting", "rc" };
+        private static readonly string[] ConfirmCommandAliases = new[] { "rconfirm", "rcconfirm", "rcraftconfirm" };
+        private static readonly string[] StorageLogCommandAliases = new[] { "rlog", "craftlog", "rcraftlog" };
+        private static readonly string[] HelpCommandAliases = new[] { "rhelp", "rangecraftinghelp", "rinfo" };
         private static readonly string[] SearchChatTypeCandidates = new[]
         {
             "XUiC_ChatWindow",
@@ -237,12 +243,15 @@ namespace ClaimLinkedCrafting
                 if (!File.Exists(path))
                 {
                     config = new ModConfig();
+                    config = ConfigSanitizer.Sanitize(config);
+                    config = ConfigSanitizer.ApplyPermissionProfile(config);
                     File.WriteAllText(path, JsonConvert.SerializeObject(config, Formatting.Indented));
                     return;
                 }
 
                 config = JsonConvert.DeserializeObject<ModConfig>(File.ReadAllText(path)) ?? new ModConfig();
                 config = ConfigSanitizer.Sanitize(config);
+                config = ConfigSanitizer.ApplyPermissionProfile(config);
                 File.WriteAllText(path, JsonConvert.SerializeObject(config, Formatting.Indented));
             }
             catch (Exception ex)
@@ -263,19 +272,63 @@ namespace ClaimLinkedCrafting
             if (!TryExtractCommandText(__args, out var text))
                 return true;
 
-            if (!IsSearchCommand(text, out var queryText))
-                return true;
-
-            lastSearchCommandFrame = Time.frameCount;
-            var handled = TryHandleRangeSearch(queryText, out var response);
-            if (!string.IsNullOrEmpty(response))
+            if (!HandleRangeCraftingSlashCommand(text, out var response))
             {
-                DeliverToPlayer(response, __instance);
+                if (!string.IsNullOrEmpty(response))
+                    DeliverToPlayer(response, __instance);
+                return false;
             }
 
-            if (!handled)
+            return true;
+        }
+
+        private static bool HandleRangeCraftingSlashCommand(string text, out string response)
+        {
+            response = null;
+            if (string.IsNullOrWhiteSpace(text) || !text.StartsWith("/", StringComparison.Ordinal))
+                return false;
+
+            if (IsCommand(text, SearchCommandAliases, out var queryText))
+            {
+                lastSearchCommandFrame = Time.frameCount;
+                return TryHandleRangeSearch(queryText, out response);
+            }
+
+            if (IsCommand(text, ConfirmCommandAliases, out var confirmArgs))
+            {
+                lastSearchCommandFrame = Time.frameCount;
+                return TryHandleStorageConfirmation(confirmArgs, out response);
+            }
+
+            if (IsCommand(text, StorageLogCommandAliases, out var logArgs))
+            {
+                lastSearchCommandFrame = Time.frameCount;
+                return TryHandleStorageLogCommand(logArgs, out response);
+            }
+
+            if (IsCommand(text, HelpCommandAliases, out var _))
+            {
+                response = BuildRangeCraftingHelpText();
                 return true;
+            }
+
             return false;
+        }
+
+        private static bool IsCommand(string text, string[] aliases, out string argsText)
+        {
+            argsText = null;
+            var trimmed = text.Trim();
+            var parts = trimmed.Substring(1).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+                return false;
+
+            var command = parts[0];
+            if (aliases.All(a => !command.Equals(a, StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            argsText = parts.Length <= 1 ? string.Empty : trimmed.Substring(trimmed.IndexOf(' ') + 1).Trim();
+            return true;
         }
 
         private static bool TryExtractCommandText(object[] args, out string text)
@@ -308,28 +361,10 @@ namespace ClaimLinkedCrafting
             return false;
         }
 
-        private static bool IsSearchCommand(string text, out string argsText)
+        private static string BuildRangeCraftingHelpText()
         {
-            argsText = null;
-            if (string.IsNullOrWhiteSpace(text))
-                return false;
-
-            if (!text.StartsWith("/", StringComparison.Ordinal))
-                return false;
-
-            var trimmed = text.Trim();
-            var parts = trimmed.Substring(1).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0)
-                return false;
-
-            var command = parts[0];
-            if (SearchCommandAliases.All(a => !command.Equals(a, StringComparison.OrdinalIgnoreCase)))
-                return false;
-
-            argsText = parts.Length <= 1
-                ? string.Empty
-                : trimmed.Substring(trimmed.IndexOf(' ') + 1).Trim();
-            return true;
+            return "[RangeCrafting] commands: " +
+                   "/rsearch <item> [max=N] [r=N] | /rsearch <item> [count=N] | /rconfirm [seconds=30] | /rlog [n] | /rhelp";
         }
 
         private static bool TryHandleRangeSearch(string argsText, out string response)
@@ -340,28 +375,20 @@ namespace ClaimLinkedCrafting
 
             if (string.IsNullOrWhiteSpace(argsText))
             {
-                response = "Usage: /rsearch <item name or item id> [max results]";
+                response = "Usage: /rsearch <item name or item id> [max=N] [r=N] [count=N]";
                 return true;
             }
 
             var args = ParseArguments(argsText);
             if (args.Count == 0)
             {
-                response = "Usage: /rsearch <item name or item id> [max results]";
+                response = "Usage: /rsearch <item name or item id> [max=N] [r=N] [count=N]";
                 return true;
             }
 
             int maxResults = config.searchMaxResults;
-            var queryTokens = new List<string>(args);
-            if (queryTokens.Count > 0)
-            {
-                var lastToken = queryTokens[queryTokens.Count - 1];
-                if (int.TryParse(lastToken, out var parsedMax) && parsedMax > 0)
-                {
-                    maxResults = parsedMax;
-                    queryTokens.RemoveAt(queryTokens.Count - 1);
-                }
-            }
+            float range = GetRangeForSearch();
+            ParseSearchCommandArgs(args, ref maxResults, ref range, out var queryTokens);
 
             var query = string.Join(" ", queryTokens).Trim();
             if (string.IsNullOrWhiteSpace(query))
@@ -370,7 +397,7 @@ namespace ClaimLinkedCrafting
                 return true;
             }
 
-            var results = FindContainersWithItem(query, maxResults);
+            var results = FindContainersWithItem(query, maxResults, range);
             var playerCount = CountItemInPlayerInventory(query, out _);
 
             if (results == null || results.Count == 0)
@@ -404,6 +431,115 @@ namespace ClaimLinkedCrafting
             return true;
         }
 
+        private static void ParseSearchCommandArgs(List<string> args, ref int maxResults, ref float range, out List<string> queryTokens)
+        {
+            queryTokens = new List<string>();
+            if (args == null || args.Count == 0)
+                return;
+
+            var leftoverRange = range;
+            var leftoverMax = maxResults;
+
+            foreach (var token in args)
+            {
+                var normalized = token.Trim();
+                if (string.IsNullOrWhiteSpace(normalized))
+                    continue;
+
+                if (TryParseColonEqualsPair(normalized, out var key, out var value))
+                {
+                    if ((key.Equals("max", StringComparison.OrdinalIgnoreCase) ||
+                         key.Equals("count", StringComparison.OrdinalIgnoreCase)) &&
+                        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedMax) &&
+                        parsedMax > 0)
+                    {
+                        leftoverMax = parsedMax;
+                        continue;
+                    }
+
+                    if ((key.Equals("r", StringComparison.OrdinalIgnoreCase) ||
+                        key.Equals("range", StringComparison.OrdinalIgnoreCase)) &&
+                        float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedRange) &&
+                        parsedRange >= 0f)
+                    {
+                        leftoverRange = parsedRange;
+                        continue;
+                    }
+                }
+
+                if (int.TryParse(normalized, out var parsed) && parsed > 0 && queryTokens.Count == 0 && args.Count == 1)
+                {
+                    // Preserve legacy `/rsearch 8` behavior as max-result shorthand.
+                    leftoverMax = parsed;
+                    continue;
+                }
+
+                queryTokens.Add(normalized);
+            }
+
+            maxResults = Mathf.Max(1, Mathf.Min(50, leftoverMax));
+            range = Mathf.Max(0f, leftoverRange);
+        }
+
+        private static bool TryHandleStorageConfirmation(string argsText, out string response)
+        {
+            response = null;
+            var seconds = config.storageUseConfirmationSeconds;
+            if (!string.IsNullOrWhiteSpace(argsText) && float.TryParse(argsText, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) && parsed > 0f)
+            {
+                seconds = parsed;
+            }
+
+            if (seconds <= 0f)
+                seconds = 30f;
+
+            var playerId = GetPlayerAuthorizationKey(GetPlatformPlayerId());
+            storageUseApprovalUntil[playerId] = Time.time + seconds;
+
+            response = $"[RangeCrafting] Storage-usage confirmation enabled for {seconds:0}s.";
+            return true;
+        }
+
+        private static bool TryHandleStorageLogCommand(string argsText, out string response)
+        {
+            response = null;
+            if (storageActionLog.Count == 0)
+            {
+                response = "[RangeCrafting] No activity yet.";
+                return true;
+            }
+
+            int maxLines = 5;
+            var request = argsText;
+            if (!string.IsNullOrWhiteSpace(request) && int.TryParse(request, out var parsedLines) && parsedLines > 0)
+                maxLines = Mathf.Clamp(parsedLines, 1, StorageActionLogLimit);
+
+            var lines = storageActionLog.Reverse().Take(maxLines).Reverse().ToList();
+            response = "[RangeCrafting] Recent craft/storage log:\n" + string.Join("\n", lines);
+            return true;
+        }
+
+        private static bool TryParseColonEqualsPair(string token, out string key, out string value)
+        {
+            key = null;
+            value = null;
+            if (string.IsNullOrWhiteSpace(token))
+                return false;
+
+            var index = token.IndexOf('=');
+            var index2 = token.IndexOf(':');
+            if (index < 0 || index >= token.Length - 1)
+            {
+                if (index2 < 0 || index2 >= token.Length - 1)
+                    return false;
+                index = index2;
+            }
+
+            key = token.Substring(0, index).Trim();
+            value = token.Substring(index + 1).Trim();
+            return !string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value);
+        }
+
         private static List<string> ParseArguments(string argsText)
         {
             if (string.IsNullOrWhiteSpace(argsText))
@@ -412,7 +548,7 @@ namespace ClaimLinkedCrafting
             return argsText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList();
         }
 
-        private static List<StorageSearchHit> FindContainersWithItem(string query, int maxResults)
+        private static List<StorageSearchHit> FindContainersWithItem(string query, int maxResults, float rangeOverride)
         {
             var hits = new List<StorageSearchHit>();
             ReloadStorages();
@@ -420,7 +556,7 @@ namespace ClaimLinkedCrafting
             var world = GameManager.Instance?.World;
             var player = world?.GetPrimaryPlayer();
             var playerPos = player?.position ?? Vector3.zero;
-            var range = GetRangeForSearch();
+            var range = Mathf.Max(0f, rangeOverride);
 
             if (int.TryParse(query, NumberStyles.Integer, CultureInfo.InvariantCulture, out var itemType))
             {
@@ -567,13 +703,11 @@ namespace ClaimLinkedCrafting
             if (string.IsNullOrWhiteSpace(query))
                 return 0;
 
-            var world = GameManager.Instance?.World;
-            var player = world?.GetPrimaryPlayer();
+            var player = GetLocalPlayer();
             if (player == null)
                 return 0;
 
-            var invObj = ResolveMemberValue(player, "inventory", "Inv") ??
-                         ResolveFieldValue(player, "inventory", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var invObj = GetPlayerInventory(player);
             if (invObj == null)
                 return 0;
 
@@ -584,6 +718,36 @@ namespace ClaimLinkedCrafting
 
             var lowered = query.ToLowerInvariant();
             return SumInventoryByName(invObj, lowered, out matchedName);
+        }
+
+        private static object GetLocalPlayer()
+        {
+            return GameManager.Instance?.World?.GetPrimaryPlayer();
+        }
+
+        private static object GetPlayerInventory(object player)
+        {
+            if (player == null)
+                return null;
+
+            return ResolveMemberValue(player, "inventory", "Inv") ??
+                   ResolveFieldValue(player, "inventory", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        }
+
+        private static int GetPlayerInventoryCount(ItemValue item)
+        {
+            if (item == null)
+                return 0;
+
+            var player = GetLocalPlayer();
+            if (player == null)
+                return 0;
+
+            var inventory = GetPlayerInventory(player);
+            if (inventory == null)
+                return 0;
+
+            return SumInventoryByType(inventory, item.type);
         }
 
         private static int SumInventoryByType(object inventory, int itemType)
@@ -943,6 +1107,9 @@ namespace ClaimLinkedCrafting
             if (!config.modEnabled || !isReady)
                 return numLeft;
 
+            if (config.requireStorageUseConfirmation && !IsStorageUseApprovedForCurrentPlayer())
+                return numLeft;
+
             return numLeft - GetAllItemCount(_itemStacks[i].itemValue);
         }
 
@@ -965,7 +1132,7 @@ namespace ClaimLinkedCrafting
             if (!config.modEnabled || !isReady)
                 return count;
 
-            return count + GetAllItemCount(item);
+            return count + GetRelevantItemCount(item);
         }
 
         private static int AddAllStorageCountIngEntry(int count, XUiC_IngredientEntry entry)
@@ -992,6 +1159,9 @@ namespace ClaimLinkedCrafting
 
         private static int GetAllItemCount(ItemValue item)
         {
+            if (!config.modEnabled || !isReady || item == null)
+                return 0;
+
             int count = 0;
             ReloadStorages();
             foreach (var storage in currentStorageDict.Values)
@@ -1007,9 +1177,37 @@ namespace ClaimLinkedCrafting
             return count;
         }
 
+        private static int GetRelevantItemCount(ItemValue item)
+        {
+            if (item == null)
+                return 0;
+
+            if (config.requireStorageUseConfirmation && !IsStorageUseApprovedForCurrentPlayer())
+                return GetPlayerInventoryCount(item);
+
+            var storageCount = GetAllItemCount(item);
+            var playerCount = GetPlayerInventoryCount(item);
+
+            return storageCount + playerCount;
+        }
+
         private static int DecItem(ItemValue item, int count)
         {
             int numLeft = count;
+            if (item == null || count <= 0)
+                return 0;
+
+            if (config.requireStorageUseConfirmation && !IsStorageUseApprovedForCurrentPlayer())
+            {
+                var playerCount = GetPlayerInventoryCount(item);
+                var fromStorage = Mathf.Max(0, count - playerCount);
+                if (fromStorage > 0)
+                {
+                    RecordStorageAction($"Blocked storage consume request: {fromStorage}x {ItemDisplayName(item)} from linked storages (run /rconfirm).");
+                }
+
+                return count;
+            }
 
             foreach (var storage in GetStoragesInConsumptionOrder(item))
             {
@@ -1035,8 +1233,12 @@ namespace ClaimLinkedCrafting
                             telItems[i].count -= take;
 
                         tel.SetModified();
+                        RecordStorageAction($"Took {take}x {ItemDisplayName(item)} from storage tile entity.");
                         if (numLeft <= 0)
+                        {
+                            RecordStorageAction($"Craft consumption complete for {ItemDisplayName(item)}: requested {count}, consumed {count}.");
                             return count;
+                        }
                     }
                 }
                 else if (storage is Bag bag)
@@ -1058,12 +1260,17 @@ namespace ClaimLinkedCrafting
                             bagItems[i].count -= take;
 
                         bag.onBackpackChanged();
+                        RecordStorageAction($"Took {take}x {ItemDisplayName(item)} from linked bag.");
                         if (numLeft <= 0)
+                        {
+                            RecordStorageAction($"Craft consumption complete for {ItemDisplayName(item)}: requested {count}, consumed {count}.");
                             return count;
+                        }
                     }
                 }
             }
 
+            RecordStorageAction($"Craft consumption incomplete for {ItemDisplayName(item)}: requested {count}, consumed {count - numLeft}.");
             return count - numLeft;
         }
 
@@ -1111,6 +1318,69 @@ namespace ClaimLinkedCrafting
 
             foreach (var entry in ordered)
                 yield return entry.Value;
+        }
+
+        private static string ItemDisplayName(ItemValue item)
+        {
+            if (item == null)
+                return "unknown";
+
+            if (item.ItemClass != null)
+                return item.ItemClass.GetItemName();
+
+            return item.type.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static bool IsStorageUseApprovedForCurrentPlayer()
+        {
+            return IsStorageUseApprovedForPlayer(GetPlatformPlayerId());
+        }
+
+        private static bool IsStorageUseApprovedForPlayer(PlatformUserIdentifierAbs playerIdentifier)
+        {
+            if (!config.requireStorageUseConfirmation)
+                return true;
+
+            var key = GetPlayerAuthorizationKey(playerIdentifier);
+            if (string.IsNullOrEmpty(key))
+                return false;
+            if (!storageUseApprovalUntil.TryGetValue(key, out var expiresAt))
+                return false;
+
+            if (Time.time > expiresAt)
+            {
+                storageUseApprovalUntil.Remove(key);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static string GetPlayerAuthorizationKey(PlatformUserIdentifierAbs playerIdentifier)
+        {
+            if (playerIdentifier.Equals(default(PlatformUserIdentifierAbs)))
+            {
+                var player = GetLocalPlayer();
+                if (player == null)
+                    return string.Empty;
+                var identity = ResolveFieldValue(player, "steamId", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) as string;
+                return identity ?? "local";
+            }
+
+            return PlatformIdentifierToComparableString(playerIdentifier) ?? playerIdentifier.ToString();
+        }
+
+        private static void RecordStorageAction(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
+            storageActionLog.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] {message}");
+            while (storageActionLog.Count > StorageActionLogLimit)
+                storageActionLog.Dequeue();
+
+            if (config.isDebug)
+                Dbgl(message);
         }
 
         private static List<ItemStack> GetStorageItems()
@@ -1479,6 +1749,12 @@ namespace ClaimLinkedCrafting
 
         private static bool IsPlayerStorageTileEntity(TileEntity tileEntity)
         {
+            if (tileEntity == null)
+                return false;
+
+            if (!IsStorageTypeAllowed(tileEntity))
+                return false;
+
             if (tileEntity is TileEntityComposite entityComposite)
             {
                 var lootable = entityComposite.GetFeature<ITileEntityLootable>();
@@ -1509,6 +1785,64 @@ namespace ClaimLinkedCrafting
                 return true;
             }
             return false;
+        }
+
+        private static bool IsStorageTypeAllowed(TileEntity tileEntity)
+        {
+            var blockName = GetContainerName(
+                tileEntity,
+                tileEntity?.block?.blockName ?? tileEntity?.GetType().Name ?? string.Empty
+            ).ToLowerInvariant();
+
+            if (string.IsNullOrWhiteSpace(blockName))
+                return true;
+
+            var allowedFilters = NormalizeFilterList(config.allowedStorageContainerNames);
+            if (allowedFilters.Length > 0)
+            {
+                if (!MatchesAnyFilter(blockName, allowedFilters))
+                    return false;
+            }
+
+            var blockedFilters = NormalizeFilterList(config.blockedStorageContainerNames);
+            if (MatchesAnyFilter(blockName, blockedFilters))
+                return false;
+
+            return true;
+        }
+
+        private static bool MatchesAnyFilter(string text, string[] filters)
+        {
+            if (string.IsNullOrWhiteSpace(text) || filters == null || filters.Length == 0)
+                return false;
+
+            for (var i = 0; i < filters.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(filters[i]))
+                    continue;
+                if (text.Contains(filters[i]))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string[] NormalizeFilterList(string[] filters)
+        {
+            if (filters == null || filters.Length == 0)
+                return Array.Empty<string>();
+
+            var normalized = new List<string>();
+            foreach (var filter in filters)
+            {
+                if (string.IsNullOrWhiteSpace(filter))
+                    continue;
+                var clean = filter.Trim().ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(clean) && !normalized.Contains(clean))
+                    normalized.Add(clean);
+            }
+
+            return normalized.ToArray();
         }
 
         private static bool IsSecureStorageTileEntity(TileEntitySecureLootContainer container)
@@ -1735,7 +2069,34 @@ namespace ClaimLinkedCrafting
                 c.permitClaimOwner = true;
             if (c.landClaimBlockNames == null || c.landClaimBlockNames.Length == 0)
                 c.landClaimBlockNames = new[] { "landclaim", "claimblock", "deed", "claim block" };
+            if (string.IsNullOrWhiteSpace(c.permissionProfile))
+                c.permissionProfile = "vanilla";
+            else
+                c.permissionProfile = c.permissionProfile.Trim();
+            if (c.storageUseConfirmationSeconds <= 0f)
+                c.storageUseConfirmationSeconds = 30f;
+            c.allowedStorageContainerNames = NormalizeFilters(c.allowedStorageContainerNames);
+            c.blockedStorageContainerNames = NormalizeFilters(c.blockedStorageContainerNames);
             return c;
+        }
+
+        private static string[] NormalizeFilters(string[] filters)
+        {
+            if (filters == null || filters.Length == 0)
+                return Array.Empty<string>();
+
+            var normalized = new List<string>(filters.Length);
+            foreach (var filter in filters)
+            {
+                if (string.IsNullOrWhiteSpace(filter))
+                    continue;
+
+                var clean = filter.Trim().ToLowerInvariant();
+                if (!normalized.Contains(clean))
+                    normalized.Add(clean);
+            }
+
+            return normalized.ToArray();
         }
 
         private static ClaimMode NormalizeMode(ClaimMode mode)
@@ -1747,6 +2108,58 @@ namespace ClaimLinkedCrafting
                 ClaimMode.Disabled => ClaimMode.Disabled,
                 _ => ClaimMode.ClaimOnly
             };
+        }
+
+        public static ModConfig ApplyPermissionProfile(ModConfig c)
+        {
+            if (c == null)
+                return c;
+
+            if (string.IsNullOrWhiteSpace(c.permissionProfile))
+                return c;
+
+            var profile = c.permissionProfile.Trim().ToLowerInvariant();
+            if (profile == "custom")
+                return c;
+
+            switch (profile)
+            {
+                case "friendsonly":
+                case "friend":
+                    c.permitClaimOwner = true;
+                    c.permitClaimFriend = true;
+                    c.permitClaimAlly = false;
+                    c.permitClaimParty = false;
+                    c.permitClaimClan = false;
+                    break;
+                case "trustedonly":
+                case "vanilla":
+                    c.permitClaimOwner = true;
+                    c.permitClaimFriend = true;
+                    c.permitClaimAlly = true;
+                    c.permitClaimParty = true;
+                    c.permitClaimClan = true;
+                    break;
+                case "allies":
+                case "allysonly":
+                    c.permitClaimOwner = true;
+                    c.permitClaimFriend = true;
+                    c.permitClaimAlly = true;
+                    c.permitClaimParty = false;
+                    c.permitClaimClan = false;
+                    break;
+                case "owneronly":
+                    c.permitClaimOwner = true;
+                    c.permitClaimFriend = false;
+                    c.permitClaimAlly = false;
+                    c.permitClaimParty = false;
+                    c.permitClaimClan = false;
+                    break;
+                default:
+                    break;
+            }
+
+            return c;
         }
     }
 }

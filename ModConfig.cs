@@ -33,14 +33,27 @@ namespace ClaimLinkedCrafting
         // - permitClaimAlly: allow ally-style entries when present.
         // - permitClaimParty: allow party teammates when available in claim metadata.
         // - permitClaimClan: allow clan/tf/tribe style entries when available.
+        // Presets: ownerOnly, friendsOnly, allies, trustedOnly, vanilla, custom
+        public string permissionProfile = "vanilla";
         public bool permitClaimOwner = true;
         public bool permitClaimFriend = true;
         public bool permitClaimAlly = true;
         public bool permitClaimParty = false;
         public bool permitClaimClan = false;
 
+        // Storage container targeting.
+        // Empty list means no whitelist filtering.
+        public string[] allowedStorageContainerNames = new string[0];
+        // If a block/container name contains any blocked token, it is skipped.
+        public string[] blockedStorageContainerNames = new string[0];
+
         // Inventory source options.
         public bool allowAllContainers = false;
+
+        // Optional explicit confirmation required before storage extraction is allowed.
+        public bool requireStorageUseConfirmation = false;
+        // Temporary confirmation lifetime in seconds when `/rconfirm` is used.
+        public float storageUseConfirmationSeconds = 30f;
 
         // Optional broader patch for edge versions.
         public bool patchHasItems = false;
