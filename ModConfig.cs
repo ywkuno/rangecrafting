@@ -38,5 +38,14 @@ namespace ClaimLinkedCrafting
 
         // Logging / debug.
         public bool isDebug = false;
+
+        // Search + highlight feature.
+        public bool enableRangeSearch = true;
+        public int searchMaxResults = 8;
+        public float searchRange = 0f;
+        public bool highlightSearchResults = true;
+        public int highlightMarkerLimit = 4;
+        public float searchMarkerDuration = 30f;
+        public int searchCommandCooldownFrames = 10;
     }
 }

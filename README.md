@@ -15,6 +15,8 @@ It does **not** alter pickup/drop, repair, reload, or vehicle-fuel behavior.
    - `<7D2D Installation>\Mods\RangeCrafting\`
 3. Ensure `ModInfo.xml`, `RangeCrafting.dll`, and `config.json` are in the same folder.
 4. Start the game and verify the mod appears in the mod list.
+5. For your setup, place the folder here:
+   - `S:\SteamLibrary\steamapps\common\7 Days To Die\Mods\RangeCrafting\`
 
 ## Workshop packaging
 
@@ -61,3 +63,23 @@ Auto-created on first run.
 
 - This mod uses Harmony + C# patching so the claim-boundary checks execute server-authoritatively in the patched methods.
 - For non-matching game versions, unsupported method signatures are skipped and no behavior is changed.
+
+## Search + Highlight (Range Search)
+
+In-game command (if the build supports the chat/console hook):
+
+```text
+/rsearch <item name or item id> [max results]
+```
+
+- `/rsearch wire 5` finds nearest matching storages and tries to highlight them.
+- If marker APIs are unavailable, you still get results with coordinates.
+
+Config:
+
+- `enableRangeSearch`: enable/disable command integration.
+- `searchMaxResults`: default max containers returned.
+- `searchRange`: override range for search; `0` uses normal crafting range logic.
+- `highlightSearchResults`: toggle marker highlight attempts.
+- `highlightMarkerLimit`: max highlighted containers per search.
+- `searchMarkerDuration`: marker lifetime in seconds (best effort).
