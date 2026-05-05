@@ -1,0 +1,17 @@
+RangeCrafting 7D2D Mod Changelog
+================================
+
+v1.0.2
+ - Added Steam-facing documentation polish and version bump.
+ - Added clearer first-run config guidance and quick-start instructions.
+ - Added explicit search/scope/state filtering usage notes in README.
+
+v1.0.1
+ - Added range storage search command output with scope/state filters and highlights.
+ - Added storage confirmation HUD hints for blocked/approved storage crafting.
+ - Added container lock-state tags in /rsearch results.
+
+v1.0.0
+ - Initial crafting-only claim-linked storage consumption support.
+ - Added claim-only / range-only / disabled modes and permission profile presets.
+ - Added range-aware storage search and marker highlighting command hooks.

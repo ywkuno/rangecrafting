@@ -61,6 +61,7 @@ For Steam Workshop uploads, also include:
 - `ModInfo.xml`
 - `README.md`
 - `config.example.json` (or your edited `config.json`)
+- `WorkshopChangelog.txt`
 
 After building `RangeCrafting.dll`, create a Steam-ready zip:
 
